@@ -520,7 +520,8 @@ static void test_syntax()
   // Any unreferenced string must be searched for anywhere.
   assert_string_capture(
       "rule test { strings: $a = \"AXS\" $_b = \"ERS\" condition: $a }",
-      "AXSERS", "ERS");
+      "AXSERS",
+      "ERS");
 
   YR_DEBUG_FPRINTF(1, stderr, "} // %s()\n", __FUNCTION__);
 }
@@ -2434,19 +2435,17 @@ void test_re()
       "rule test { strings: $a = /abc\\b/ wide condition: $a }",
       TEXT_1024_BYTES "a\0b\0c\0b\t");
 
-  assert_false_rule_blob(
+  assert_false_rule(
       "rule test { strings: $a = /\\b/ wide condition: $a }",
       TEXT_1024_BYTES "abc");
 
-  assert_true_rule_blob(
-    "rule test { condition: \"avb\" matches /a\\vb/ }",
-    TEXT_1024_BYTES "rule test { condition: \"avb\" matches /a\\vb/ }"
-  )
+  assert_true_rule(
+      "rule test { condition: \"avb\" matches /a\\vb/ }",
+      TEXT_1024_BYTES "rule test { condition: \"avb\" matches /a\\vb/ }");
 
-   assert_false_rule_blob(
-    "rule test { condition: \"ab\" matches /a\\vb/ }",
-    TEXT_1024_BYTES "rule test { condition: \"ab\" matches /a\\vb/ }"
-  )
+  assert_false_rule(
+      "rule test { condition: \"ab\" matches /a\\vb/ }",
+      TEXT_1024_BYTES "rule test { condition: \"ab\" matches /a\\vb/ }");
 
   assert_regexp_syntax_error(")");
   assert_true_regexp("abc", "abc", "abc");
@@ -2622,7 +2621,7 @@ void test_re()
   assert_false_regexp("[\\x00-\\x02]+", "\x03\x04\x05");
   assert_true_regexp("[\\x5D]", "]", "]");
   assert_true_regexp("[\\x5A-\\x5D]", "\x5B", "\x5B");
-  assert_false_regexp("[\\x5A-\\x5D]", "\x4F")
+  assert_false_regexp("[\\x5A-\\x5D]", "\x4F");
   assert_true_regexp("[\\x5D-\\x5F]", "\x5E", "\x5E");
   assert_true_regexp("[\\x5C-\\x5F]", "\x5E", "\x5E");
   assert_true_regexp("[\\x5D-\\x5F]", "\x5E", "\x5E");
@@ -2639,8 +2638,10 @@ void test_re()
   assert_false_regexp("^(ab|cd)e", "abcde");
   assert_true_regexp("(abc|)ef", "abcdef", "ef");
   assert_true_regexp("(abc|)ef", "abcef", "abcef");
+  assert_true_regexp("(abc|)", "foo", "");
   assert_true_regexp("\\babc", "abc", "abc");
   assert_true_regexp("abc\\b", "abc", "abc");
+  assert_true_regexp("\\b", "abc", "");
   assert_false_regexp("\\babc", "1abc");
   assert_false_regexp("abc\\b", "abc1");
   assert_true_regexp("abc\\s\\b", "abc x", "abc ");
@@ -2979,6 +2980,36 @@ static void test_global_rules()
         condition: true \
       }",
       NULL);
+
+  assert_false_rule(
+      "global private rule global_rule { \
+        strings: \
+          $a = \"foo\" \
+        condition: \
+          $a \
+      } \
+      rule test { \
+       strings: \
+          $a = \"bar\" \
+        condition: \
+          $a \
+      }",
+      "bar");
+
+  assert_true_rule(
+      "global private rule global_rule { \
+        strings: \
+          $a = \"foo\" \
+        condition: \
+          $a \
+      } \
+      rule test { \
+       strings: \
+          $a = \"bar\" \
+        condition: \
+          $a \
+      }",
+      "foobar");
 
   YR_DEBUG_FPRINTF(1, stderr, "} // %s()\n", __FUNCTION__);
 }
@@ -3553,27 +3584,48 @@ void test_process_scan()
 #endif
 
 void test_invalid_escape_sequences_warnings()
- {
-    YR_DEBUG_FPRINTF(1, stderr, "+ %s() {\n", __FUNCTION__);
+{
+  YR_DEBUG_FPRINTF(1, stderr, "+ %s() {\n", __FUNCTION__);
 
-    assert_warning_strict_escape("rule test { strings: $a = /ab\\cdef/ condition: $a }");
-    assert_warning_strict_escape("rule test { strings: $a = /ab\\ def/ condition: $a }");
-    assert_warning_strict_escape("rule test { strings: $a = /ab\\;def/ condition: $a }");
-    assert_no_warnings("rule test { strings: $a = /ab\\*def/ condition: $a }");
-    assert_no_warnings("rule test { strings: $a = /abcdef/ condition: $a }");
-    assert_warning_strict_escape("rule test { strings: $a = /ab\\cdef/ condition: $a }");
-    assert_no_warnings("rule test { strings: $a = /abcdef/ condition: $a }");
-    assert_warning_strict_escape("rule test { strings: $a = /\\\\WINDOWS\\\\system32\\\\\\victim\\.exe\\.exe/ condition: $a }");
-    assert_no_warnings("rule test { strings: $a = /\\\\WINDOWS\\\\system32\\\\victim\\.exe\\.exe/ condition: $a }");
-    assert_warning_strict_escape("rule test { strings: $a = /AppData\\\\Roaming\\\\[0-9]{9,12}\\VMwareCplLauncher\\.exe/ condition: $a }");
-    assert_no_warnings("rule test { strings: $a = /AppData\\\\Roaming\\\\[0-9]{9,12}\\\\VMwareCplLauncher\\.exe/ condition: $a }");
-    assert_warning_strict_escape("rule test { strings: $a = /ab[\\000-\\343]/ condition: $a }");
-    assert_no_warnings("rule test { strings: $a = /ab[\\x00-\\x43]/ condition: $a }");
-    assert_warning_strict_escape("rule test { strings: $a = /C:\\Users\\\\[^\\\\]+\\\\AppData\\\\Local\\\\AzireVPN\\\\token\\.txt/ condition: $a }");
-    assert_no_warnings("rule test { strings: $a = /C:\\\\Users\\\\[^\\\\]+\\\\AppData\\\\Local\\\\AzireVPN\\\\token\\.txt/ condition: $a }");
-    assert_warning_strict_escape("rule test { condition: \"avb\" matches /a\\vb/ }");
-    
-    YR_DEBUG_FPRINTF(1, stderr, "} // %s()\n", __FUNCTION__);   
+  assert_warning_strict_escape(
+      "rule test { strings: $a = /ab\\cdef/ condition: $a }");
+  assert_warning_strict_escape(
+      "rule test { strings: $a = /ab\\ def/ condition: $a }");
+  assert_warning_strict_escape(
+      "rule test { strings: $a = /ab\\;def/ condition: $a }");
+  assert_no_warnings("rule test { strings: $a = /ab\\*def/ condition: $a }");
+  assert_no_warnings("rule test { strings: $a = /abcdef/ condition: $a }");
+  assert_warning_strict_escape(
+      "rule test { strings: $a = /ab\\cdef/ condition: $a }");
+  assert_no_warnings("rule test { strings: $a = /abcdef/ condition: $a }");
+  assert_warning_strict_escape(
+      "rule test { strings: $a = "
+      "/\\\\WINDOWS\\\\system32\\\\\\victim\\.exe\\.exe/ condition: $a }");
+  assert_no_warnings(
+      "rule test { strings: $a = "
+      "/\\\\WINDOWS\\\\system32\\\\victim\\.exe\\.exe/ condition: $a }");
+  assert_warning_strict_escape("rule test { strings: $a = "
+                               "/AppData\\\\Roaming\\\\[0-9]{9,12}"
+                               "\\VMwareCplLauncher\\.exe/ condition: $a }");
+  assert_no_warnings("rule test { strings: $a = "
+                     "/AppData\\\\Roaming\\\\[0-9]{9,12}"
+                     "\\\\VMwareCplLauncher\\.exe/ condition: $a }");
+  assert_warning_strict_escape(
+      "rule test { strings: $a = /ab[\\000-\\343]/ condition: $a }");
+  assert_no_warnings(
+      "rule test { strings: $a = /ab[\\x00-\\x43]/ condition: $a }");
+  assert_warning_strict_escape(
+      "rule test { strings: $a = "
+      "/C:\\Users\\\\[^\\\\]+\\\\AppData\\\\Local\\\\AzireVPN\\\\token\\.txt/ "
+      "condition: $a }");
+  assert_no_warnings(
+      "rule test { strings: $a = "
+      "/C:\\\\Users\\\\[^\\\\]+\\\\AppData\\\\Local\\\\AzireVPN\\\\token\\.txt/"
+      " condition: $a }");
+  assert_warning_strict_escape(
+      "rule test { condition: \"avb\" matches /a\\vb/ }");
+
+  YR_DEBUG_FPRINTF(1, stderr, "} // %s()\n", __FUNCTION__);
 }
 
 void test_performance_warnings()

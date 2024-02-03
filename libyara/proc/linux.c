@@ -97,7 +97,7 @@ int _yr_process_attach(int pid, YR_PROC_ITERATOR_CTX* context)
   snprintf(buffer, sizeof(buffer), "/proc/%u/pagemap", pid);
   proc_info->pagemap_fd = open(buffer, O_RDONLY);
 
-  if (proc_info->mem_fd == -1)
+  if (proc_info->pagemap_fd == -1)
     goto err;
 
   context->proc_info = proc_info;
@@ -218,8 +218,16 @@ YR_API const uint8_t* yr_process_fetch_memory_block_data(YR_MEMORY_BLOCK* block)
         fd,
         proc_info->map_offset);
     close(fd);
+    if (context->buffer == MAP_FAILED)
+    {
+      // Notify the code below that we couldn't read from the file
+      // fallback to pread() from the process
+      fd = -1;
+    }
+    context->buffer_size = block->size;
   }
-  else
+
+  if (fd < 0)
   {
     context->buffer = mmap(
         NULL,
@@ -228,23 +236,20 @@ YR_API const uint8_t* yr_process_fetch_memory_block_data(YR_MEMORY_BLOCK* block)
         MAP_PRIVATE | MAP_ANONYMOUS,
         -1,
         0);
-  }
-
-  if (context->buffer != NULL)
-  {
+    if (context->buffer == MAP_FAILED)
+    {
+      context->buffer = NULL;
+      context->buffer_size = 0;
+      goto _exit;
+    }
     context->buffer_size = block->size;
-  }
-  else
-  {
-    context->buffer_size = 0;
-    goto _exit;
   }
 
   // If mapping can't be accessed through the filesystem, read everything from
   // target process VM.
   if (fd == -1)
   {
-    if (pread(
+    if (pread64(
             proc_info->mem_fd,
             (void*) context->buffer,
             block->size,
@@ -260,7 +265,7 @@ YR_API const uint8_t* yr_process_fetch_memory_block_data(YR_MEMORY_BLOCK* block)
     {
       goto _exit;
     }
-    if (pread(
+    if (pread64(
             proc_info->pagemap_fd,
             pagemap,
             sizeof(uint64_t) * block->size / page_size,
@@ -279,7 +284,7 @@ YR_API const uint8_t* yr_process_fetch_memory_block_data(YR_MEMORY_BLOCK* block)
       // swap-backed and if it differs from our mapping.
       uint8_t buffer[page_size];
 
-      if (pread(
+      if (pread64(
               proc_info->mem_fd,
               buffer,
               page_size,
