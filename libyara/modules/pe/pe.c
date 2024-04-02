@@ -204,19 +204,6 @@ static void pe_parse_rich_signature(PE* pe, uint64_t base_address)
   if (rich_signature == NULL)
     return;
 
-  // The three key values must all be equal and the first dword
-  // XORs to "DanS". Then walk the buffer looking for "Rich" which marks the
-  // end. Technically the XOR key should be right after "Rich" but it's not
-  // important.
-
-  if (yr_le32toh(rich_signature->key1) != yr_le32toh(rich_signature->key2) ||
-      yr_le32toh(rich_signature->key2) != yr_le32toh(rich_signature->key3) ||
-      (yr_le32toh(rich_signature->dans) ^ yr_le32toh(rich_signature->key1)) !=
-          RICH_DANS)
-  {
-    return;
-  }
-
   // Multiply by 4 because we are counting in DWORDs.
   rich_len = (rich_ptr - (DWORD*) rich_signature) * 4;
   raw_data = (BYTE*) yr_malloc(rich_len);
@@ -232,9 +219,7 @@ static void pe_parse_rich_signature(PE* pe, uint64_t base_address)
       "rich_signature.offset");
 
   yr_set_integer(rich_len, pe->object, "rich_signature.length");
-
-  yr_set_integer(
-      yr_le32toh(rich_signature->key1), pe->object, "rich_signature.key");
+  yr_set_integer(yr_le32toh(key), pe->object, "rich_signature.key");
 
   clear_data = (BYTE*) yr_malloc(rich_len);
 
@@ -251,7 +236,7 @@ static void pe_parse_rich_signature(PE* pe, uint64_t base_address)
        rich_ptr < (DWORD*) (clear_data + rich_len);
        rich_ptr++)
   {
-    *rich_ptr ^= rich_signature->key1;
+    *rich_ptr ^= key;
   }
 
   yr_set_sized_string(
@@ -383,7 +368,7 @@ static void pe_parse_debug_directory(PE* pe)
       pdb_path_len = strnlen(
           pdb_path, yr_min(available_space(pe, pdb_path), MAX_PATH));
 
-      if (pdb_path_len > 0 && pdb_path_len < MAX_PATH)
+      if (pdb_path_len >= 0 && pdb_path_len < MAX_PATH)
       {
         yr_set_sized_string(pdb_path, pdb_path_len, pe->object, "pdb_path");
         break;
@@ -466,14 +451,12 @@ static int _pe_iterate_resources(
 
   entry = (PIMAGE_RESOURCE_DIRECTORY_ENTRY) (resource_dir + 1);
 
+  if (!fits_in_pe(
+          pe, entry, total_entries * sizeof(IMAGE_RESOURCE_DIRECTORY_ENTRY)))
+    return result;
+
   for (i = 0; i < total_entries; i++)
   {
-    if (!struct_fits_in_pe(pe, entry, IMAGE_RESOURCE_DIRECTORY_ENTRY))
-    {
-      result = RESOURCE_ITERATOR_ABORTED;
-      break;
-    }
-
     switch (rsrc_tree_level)
     {
     case 0:
@@ -511,10 +494,6 @@ static int _pe_iterate_resources(
             callback,
             callback_data);
       }
-      else
-      {
-        result = RESOURCE_ITERATOR_ABORTED;
-      }
     }
     else
     {
@@ -535,10 +514,6 @@ static int _pe_iterate_resources(
         {
           result = RESOURCE_ITERATOR_ABORTED;
         }
-      }
-      else
-      {
-        result = RESOURCE_ITERATOR_ABORTED;
       }
     }
 
@@ -1767,8 +1742,7 @@ void _process_authenticode(
     /* If any signature is valid -> file is correctly signed */
     signature_valid |= verified;
 
-    yr_set_integer(
-        verified, pe->object, "signatures[%i].verified", *sig_count);
+    yr_set_integer(verified, pe->object, "signatures[%i].verified", *sig_count);
 
     yr_set_string(
         authenticode->digest_alg,
@@ -1956,6 +1930,8 @@ static void pe_parse_certificates(PE* pe)
 
   // Default to 0 signatures until we know otherwise.
   yr_set_integer(0, pe->object, "number_of_signatures");
+  // Default to not signed until we know otherwise.
+  yr_set_integer(0, pe->object, "is_signed");
 
   PIMAGE_DATA_DIRECTORY directory = pe_get_directory_entry(
       pe, IMAGE_DIRECTORY_ENTRY_SECURITY);
@@ -2052,7 +2028,10 @@ static void pe_parse_header(PE* pe, uint64_t base_address, int flags)
   PIMAGE_DATA_DIRECTORY data_dir;
 
   char section_name[IMAGE_SIZEOF_SHORT_NAME + 1];
-  int sect_name_length, scount, ddcount;
+  int sect_name_length;
+
+  uint16_t scount;
+  uint32_t ddcount;
 
   uint64_t highest_sec_siz = 0;
   uint64_t highest_sec_ofs = 0;

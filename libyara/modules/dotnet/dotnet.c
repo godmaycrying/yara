@@ -2932,10 +2932,6 @@ void dotnet_parse_tilde_2(
         index_size = 2;
 
       row_size = (4 + 4 + index_sizes.string + index_size);
-
-      // Using 'i' is insufficent since we may skip certain resources and
-      // it would give an inaccurate count in that case.
-      counter = 0;
       row_ptr = table_offset;
 
       // First DWORD is the offset.
@@ -2945,11 +2941,7 @@ void dotnet_parse_tilde_2(
           break;
 
         manifestresource_table = (PMANIFESTRESOURCE_TABLE) row_ptr;
-        resource_offset = yr_le32toh(manifestresource_table->Offset);
 
-        // Only set offset if it is in this file (implementation != 0).
-        // Can't use manifestresource_table here because the Name and
-        // Implementation fields are variable size.
         if (index_size == 4)
           implementation = yr_le32toh(
               *(DWORD*) (row_ptr + 4 + 4 + index_sizes.string));
@@ -2957,38 +2949,7 @@ void dotnet_parse_tilde_2(
           implementation = yr_le16toh(
               *(WORD*) (row_ptr + 4 + 4 + index_sizes.string));
 
-        if (implementation != 0)
-        {
-          row_ptr += row_size;
-          continue;
-        }
-
-        if (!fits_in_pe(
-                pe, pe->data + resource_base + resource_offset, sizeof(DWORD)))
-        {
-          row_ptr += row_size;
-          continue;
-        }
-
-        resource_size = yr_le32toh(
-            *(DWORD*) (pe->data + resource_base + resource_offset));
-
-        if (!fits_in_pe(
-                pe, pe->data + resource_base + resource_offset, resource_size))
-        {
-          row_ptr += row_size;
-          continue;
-        }
-
-        // Add 4 to skip the size.
-        yr_set_integer(
-            resource_base + resource_offset + 4,
-            pe->object,
-            "resources[%i].offset",
-            counter);
-
-        yr_set_integer(
-            resource_size, pe->object, "resources[%i].length", counter);
+        row_ptr += row_size;
 
         name = pe_get_dotnet_string(
             pe,
@@ -2997,13 +2958,37 @@ void dotnet_parse_tilde_2(
             DOTNET_STRING_INDEX(manifestresource_table->Name));
 
         if (name != NULL)
-          yr_set_string(name, pe->object, "resources[%i].name", counter);
+          yr_set_string(name, pe->object, "resources[%i].name", i);
 
-        row_ptr += row_size;
-        counter++;
+        // Only set offset and length if it is in this file, otherwise continue
+        // with the next resource.
+        if (implementation != 0)
+          continue;
+
+        resource_offset = yr_le32toh(manifestresource_table->Offset);
+
+        if (!fits_in_pe(
+                pe, pe->data + resource_base + resource_offset, sizeof(DWORD)))
+          continue;
+
+        resource_size = yr_le32toh(
+            *(DWORD*) (pe->data + resource_base + resource_offset));
+
+        if (!fits_in_pe(
+                pe, pe->data + resource_base + resource_offset, resource_size))
+          continue;
+
+        // Add 4 to skip the size.
+        yr_set_integer(
+            resource_base + resource_offset + 4,
+            pe->object,
+            "resources[%i].offset",
+            i);
+
+        yr_set_integer(resource_size, pe->object, "resources[%i].length", i);
       }
 
-      yr_set_integer(counter, pe->object, "number_of_resources");
+      yr_set_integer(i, pe->object, "number_of_resources");
 
       table_offset += row_size * num_rows;
       break;
@@ -3286,19 +3271,6 @@ static bool dotnet_is_dotnet(PE* pe)
   {
     if (yr_le32toh(OptionalHeader(pe, NumberOfRvaAndSizes)) <
         IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR)
-      return false;
-  }
-  else if (!(pe->header->FileHeader.Characteristics & IMAGE_FILE_DLL))  // 32bit
-  {
-    // Check first 2 bytes of the Entry point are equal to 0xFF 0x25
-    int64_t entry_offset = pe_rva_to_offset(
-        pe, yr_le32toh(pe->header->OptionalHeader.AddressOfEntryPoint));
-
-    if (entry_offset < 0 || !fits_in_pe(pe, pe->data + entry_offset, 2))
-      return false;
-
-    const uint8_t* entry_data = pe->data + entry_offset;
-    if (!(entry_data[0] == 0xFF && entry_data[1] == 0x25))
       return false;
   }
 
