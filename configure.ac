@@ -1,4 +1,4 @@
-AC_INIT([yara], [4.5.0], [vmalvarez@virustotal.com])
+AC_INIT([yara], [4.5.1], [vmalvarez@virustotal.com])
 
 AM_SILENT_RULES([yes])
 AC_CONFIG_SRCDIR([cli/yara.c])
@@ -31,9 +31,6 @@ AC_PROG_YACC
 AC_C_INLINE
 # Defines WORDS_BIGENDIAN if building in a big-endian host.
 AC_C_BIGENDIAN
-
-# Arrange for 64-bit file offsets.
-AC_SYS_LARGEFILE
 
 LT_INIT
 AC_CANONICAL_HOST
