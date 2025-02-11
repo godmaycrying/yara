@@ -509,7 +509,11 @@ static int _pe_iterate_resources(
       if (struct_fits_in_pe(pe, data_entry, IMAGE_RESOURCE_DATA_ENTRY))
       {
         if (yr_le32toh(data_entry->Size) > 0 &&
-            yr_le32toh(data_entry->Size) < pe->data_size)
+            // We could use the PE's size as an upper bound for the entry size,
+            // but there are some truncated files where the PE size is lower.
+            // Use a reasonably large value as the upper bound and avoid some
+            // completely corrupt entries with random values.
+            yr_le32toh(data_entry->Size) <= 0x3FFFFFFF)
         {
           if (callback(
                   data_entry,
@@ -845,7 +849,8 @@ static IMPORT_FUNCTION* pe_parse_import_descriptor(
 
     while (struct_fits_in_pe(pe, thunks64, IMAGE_THUNK_DATA64) &&
            yr_le64toh(thunks64->u1.Ordinal) != 0 &&
-           parsed_imports < MAX_PE_IMPORTS)
+           parsed_imports < MAX_PE_IMPORTS &&
+           *num_function_imports < MAX_PE_IMPORTS)
     {
       char* name = NULL;
       uint16_t ordinal = 0;
@@ -935,6 +940,7 @@ static IMPORT_FUNCTION* pe_parse_import_descriptor(
 
     while (struct_fits_in_pe(pe, thunks32, IMAGE_THUNK_DATA32) &&
            yr_le32toh(thunks32->u1.Ordinal) != 0 &&
+           parsed_imports < MAX_PE_IMPORTS &&
            *num_function_imports < MAX_PE_IMPORTS)
     {
       char* name = NULL;
